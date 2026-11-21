@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <title>Bản đồ giám sát ngập lụt</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/protomaps-leaflet@4.0.1/dist/protomaps-leaflet.js"></script>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #app { height: 100%; display: flex; font: 13px system-ui, Segoe UI, Roboto, Arial, sans-serif; }
+    #sidebar { width: 320px; background: rgba(20,20,20,.94); color: #fff; padding: 12px;
+      display: flex; flex-direction: column; gap: 10px; box-sizing: border-box; }
+    #sidebar h2 { margin: 0 0 0 40px; font-size: 15px; }
+    #sidebar.hidden { display: none; }
+    select, input[type=text] { width: 100%; padding: 8px 10px; border-radius: 8px;
+      border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.08);
+      color: #fff; box-sizing: border-box; font-size: 13px; }
+    select option { color: #000; }
+    #list { flex: 1; overflow: auto; border: 1px solid rgba(255,255,255,.18); border-radius: 8px; }
+    .item { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,.1); cursor: pointer; }
+    .item:hover { background: rgba(255,255,255,.08); }
+    .item b { display: block; font-size: 13px; }
+    .item span { font-size: 12px; opacity: .75; }
+    #map { flex: 1; }
+    .note { font-size: 11px; opacity: .7; line-height: 1.35; }
+    #sbToggle { position: absolute; top: 10px; left: 10px; z-index: 1200;
+      width: 34px; height: 34px; border-radius: 8px; border: none; cursor: pointer;
+      background: rgba(20,20,20,.85); color: #fff; font-size: 17px; }
+    #legend { position: absolute; bottom: 18px; right: 10px; z-index: 1100;
+      background: rgba(20,20,20,.85); color: #fff; padding: 8px 10px;
+      border-radius: 8px; font-size: 12px; line-height: 1.5; }
+    #legend i { display: inline-block; width: 14px; height: 11px;
+      margin-right: 6px; border-radius: 2px; vertical-align: -1px; }
+    label.chk { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+    label.chk input { width: auto; }
+    .gsw-tint { filter: hue-rotate(-95deg) saturate(1.3) brightness(1.05); }
+    #helpBtn { padding: 7px; border-radius: 8px; border: 1px solid rgba(255,255,255,.25);
+      background: rgba(255,255,255,.12); color: #fff; cursor: pointer; font-size: 13px; }
+    #helpBtn:hover { background: rgba(255,255,255,.2); }
+    #helpOverlay { display: none; position: fixed; inset: 0; z-index: 2000;
+      background: rgba(0,0,0,.6); }
+    #helpBox { position: absolute; inset: 5% 8%; overflow: auto; background: #1c1c1e;
+      color: #eee; border-radius: 12px; padding: 22px 26px; line-height: 1.55; font-size: 13.5px; }
+    #helpBox h1 { font-size: 18px; margin-top: 0; }
+    #helpBox h2 { font-size: 15px; margin: 16px 0 6px; }
+    #helpBox table { border-collapse: collapse; margin: 6px 0; }
+    #helpBox td, #helpBox th { border: 1px solid #555; padding: 4px 10px; font-size: 12.5px; }
+    #helpBox i.sw { display: inline-block; width: 13px; height: 11px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; }
+    #helpClose { position: absolute; top: 12px; right: 16px; font-size: 22px;
+      background: none; border: none; color: #fff; cursor: pointer; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <button id="sbToggle" title="Ẩn/hiện bảng điều khiển">☰</button>
+  <div id="sidebar">
+    <h2>Bản đồ giám sát ngập lụt</h2>
+    <select id="dateSel"></select>
+    <label class="chk"><input type="checkbox" id="floodChk" checked />Lớp ngập lụt</label>
+    <label class="chk"><input type="checkbox" id="depthChk" checked />Độ sâu ngập (khi có)</label>
+    <label class="chk"><input type="checkbox" id="fpChk" checked />Vùng có ảnh vệ tinh</label>
+    <label class="chk"><input type="checkbox" id="waterChk" />Mặt nước thường xuyên</label>
+    <label class="chk"><input type="checkbox" id="adminChk" />Ranh giới hành chính</label>
+    <label class="chk" id="riceRow" style="display:none"><input type="checkbox" id="riceChk" />Ruộng lúa</label>
+    <select id="provSel"><option value="">— Tất cả tỉnh —</option></select>
+    <input type="text" id="q" placeholder="Tìm xã/phường..." />
+    <div id="list"></div>
+    <button id="helpBtn">📖 Hướng dẫn sử dụng</button>
+    <div class="note">Nguồn: Copernicus GFM (Sentinel-1, 20 m). Diện ngập vệ tinh,
+      chỉ các ngày có ảnh trong 14 ngày gần nhất. Cập nhật hằng ngày ~15:00.</div>
+  </div>
+  <div id="map"></div>
+  <div id="legend">
+    <div id="legendFlood"><i style="background:#3fb6ff"></i>Diện ngập</div>
+    <div id="legendDepth" style="display:none">
+      <div><i style="background:#9be2ff"></i>&lt; 0,5 m</div>
+      <div><i style="background:#41aaff"></i>0,5 – 1 m</div>
+      <div><i style="background:#1e6ff0"></i>1 – 2 m</div>
+      <div><i style="background:#8a2bd8"></i>&gt; 2 m</div>
+    </div>
+    <div id="legendFp"><i style="background:rgba(255,255,255,.15);border:1.5px dashed #000"></i>Vùng có ảnh vệ tinh</div>
+    <div id="legendWater" style="display:none"><i style="background:#12a385"></i>Mặt nước thường xuyên</div>
+    <div id="legendRice" style="display:none"><i style="background:#f5d020"></i>Ruộng lúa</div>
+  </div>
+
+  <div id="helpOverlay">
+    <div id="helpBox">
+      <button id="helpClose">✕</button>
+      <h1>Hướng dẫn sử dụng — Bản đồ giám sát ngập lụt</h1>
+      <p>Bản đồ theo dõi <b>diện ngập lụt trên toàn Việt Nam</b> từ ảnh vệ tinh radar
+      Sentinel-1 (hệ thống Copernicus Global Flood Monitoring — GFM, độ phân giải 20 m),
+      <b>cập nhật tự động mỗi ngày (~15:00)</b>, hiển thị các ngày có ảnh trong
+      <b>2 tuần gần nhất</b>. Sông, hồ, biển (mặt nước thường xuyên) đã được loại bỏ —
+      bản đồ chỉ thể hiện nước ngập bất thường.</p>
+
+      <h2>Các lớp bản đồ</h2>
+      <table>
+        <tr><th>Lớp</th><th>Ý nghĩa</th></tr>
+        <tr><td><i class="sw" style="background:#3fb6ff"></i>Diện ngập</td>
+            <td>vùng vệ tinh phát hiện có nước ngập</td></tr>
+        <tr><td>Độ sâu ngập</td>
+            <td>ước tính từ mô hình FLEXTH (JRC) + mô hình số độ cao FABDEM 30 m, 4 cấp:
+                <i class="sw" style="background:#9be2ff"></i>&lt;0,5 m&nbsp;
+                <i class="sw" style="background:#41aaff"></i>0,5–1 m&nbsp;
+                <i class="sw" style="background:#1e6ff0"></i>1–2 m&nbsp;
+                <i class="sw" style="background:#8a2bd8"></i>&gt;2 m.
+                Tự động hiển thị khi có dữ liệu; là <b>ước tính mô hình</b>, chỉ dùng tham khảo.</td></tr>
+        <tr><td><i class="sw" style="background:rgba(255,255,255,.15);border:1.5px dashed #000"></i>Vùng có ảnh vệ tinh</td>
+            <td>dải quét thực tế của vệ tinh trong ngày đã chọn. <b>Ngoài vùng này không có
+                quan trắc</b> — "không thấy ngập" ở đó không có nghĩa là không ngập.</td></tr>
+        <tr><td><i class="sw" style="background:#12a385"></i>Mặt nước thường xuyên</td>
+            <td>sông, hồ, mặt nước theo mùa (JRC Global Surface Water)</td></tr>
+        <tr><td><i class="sw" style="background:#f5d020"></i>Ruộng lúa</td>
+            <td>đất trồng lúa theo bản đồ sử dụng đất JAXA Việt Nam độ phân giải 10 m,
+                năm 2020 (phiên bản 23.09) — eorc.jaxa.jp/ALOS. Bật lớp này để nhận biết
+                vùng «ngập» thực chất là ruộng đang có nước (tưới/vụ lúa), đặc biệt ở
+                đồng bằng sông Cửu Long.</td></tr>
+        <tr><td>Ranh giới hành chính</td>
+            <td>ranh giới xã/phường (màu trắng); <b>bấm vào bản đồ</b> khi bật lớp này để xem
+                tên xã và số liệu ngập của xã đó</td></tr>
+      </table>
+
+      <h2>Cách sử dụng</h2>
+      <ol>
+        <li><b>Chọn ngày</b> — ngày ghi «không phát hiện ngập» nghĩa là có ảnh
+            nhưng không thấy ngập trong dải quét (hãy bật «Vùng có ảnh vệ tinh»
+            để biết dải quét ở đâu). Ngày ghi «không có ảnh trên VN» hoặc
+            <b>không có trong danh sách</b> = vệ tinh không chụp lãnh thổ
+            Việt Nam ngày đó.</li>
+        <li><b>Chọn tỉnh</b> — liệt kê các tỉnh có ngập kèm tổng diện tích (km²).</li>
+        <li><b>Tìm xã/phường</b> — gõ tên xã; danh sách cho biết diện tích ngập (km²)
+            và tỷ lệ % diện tích xã bị ngập; bấm vào một xã để phóng to đến xã đó.</li>
+        <li>Nút <b>☰</b> ẩn/hiện bảng điều khiển để xem bản đồ toàn màn hình.</li>
+      </ol>
+
+      <h2>Lưu ý khi đọc số liệu</h2>
+      <ul>
+        <li>Dữ liệu là <b>quan trắc vệ tinh tại thời điểm chụp</b>, không phải dự báo;
+            ngập giữa hai lần bay qua có thể không được ghi nhận (mỗi khu vực thường
+            được chụp 2–4 ngày một lần, độ trễ ~8 giờ).</li>
+        <li>Radar khó phát hiện nước dưới <b>tán cây rậm</b> và trong <b>đô thị dày đặc</b> —
+            diện ngập ở đó có thể bị thiếu.</li>
+        <li>Vùng ngập nhỏ hơn ~1.600 m² (≈4 điểm ảnh) không hiển thị.</li>
+        <li>Nguồn dữ liệu: Copernicus Emergency Management Service — Global Flood Monitoring
+            (global-flood.emergency.copernicus.eu), miễn phí và công khai.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<script>
+const map = L.map('map').setView([16.2, 106.5], 6);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { attribution: 'Tiles &copy; Esri', maxZoom: 18 }).addTo(map);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom: 18, pane: 'shadowPane' }).addTo(map);
+
+fetch('vn_boundary.geojson').then(r => r.json()).then(g =>
+  L.geoJSON(g, { style: { color: '#bbb', weight: 1, fill: false } }).addTo(map));
+
+let floodLayers = [], stats = null, currentEntry = null;
+let fpLayer = null, waterLayer = null, adminLayer = null, communesGeo = null;
+
+const FLOOD_RULES = [{
+  dataLayer: 'flood',
+  symbolizer: new protomapsL.PolygonSymbolizer({ fill: '#3fb6ff', opacity: 0.85 })
+}];
+const DEPTH_COLORS = { 1: '#9be2ff', 2: '#41aaff', 3: '#1e6ff0', 4: '#8a2bd8' };
+const DEPTH_RULES = Object.entries(DEPTH_COLORS).map(([cls, color]) => ({
+  dataLayer: 'depth',
+  filter: (z, f) => f.props.depth_class == cls,
+  symbolizer: new protomapsL.PolygonSymbolizer({ fill: color, opacity: 0.9 })
+}));
+
+function showDate(entry) {
+  currentEntry = entry;
+  floodLayers.forEach(l => map.removeLayer(l));
+  floodLayers = [];
+  const floodOn = document.getElementById('floodChk').checked;
+  const wantDepth = floodOn && document.getElementById('depthChk').checked && entry.depth;
+  if (floodOn && !wantDepth) {
+    floodLayers = entry.tiles.map(t =>
+      protomapsL.leafletLayer({ url: t, paintRules: FLOOD_RULES, maxDataZoom: 12 }).addTo(map));
+  } else if (wantDepth) {
+    floodLayers = [protomapsL.leafletLayer({ url: entry.depth, paintRules: DEPTH_RULES, maxDataZoom: 12 }).addTo(map)];
+  }
+  document.getElementById('legendDepth').style.display = wantDepth ? '' : 'none';
+  document.getElementById('legendFlood').style.display = (floodOn && !wantDepth) ? '' : 'none';
+  document.getElementById('depthChk').disabled = !entry.depth;
+  showFootprint(entry);
+  fetch('stats/' + entry.date + '.json').then(r => r.json()).then(s => { stats = s; renderProv(); renderList(); });
+}
+
+function showFootprint(entry) {
+  if (fpLayer) { map.removeLayer(fpLayer); fpLayer = null; }
+  document.getElementById('legendFp').style.display = 'none';
+  if (!document.getElementById('fpChk').checked || !entry.footprint) return;
+  fetch(entry.footprint).then(r => r.json()).then(g => {
+    fpLayer = L.geoJSON(g, { style: { color: '#000', weight: 2, dashArray: '6 4',
+      fillColor: '#fff', fillOpacity: 0.05, opacity: 0.9 }, interactive: false }).addTo(map);
+    document.getElementById('legendFp').style.display = '';
+  });
+}
+
+function toggleWater() {
+  if (waterLayer) { map.removeLayer(waterLayer); waterLayer = null; }
+  const on = document.getElementById('waterChk').checked;
+  document.getElementById('legendWater').style.display = on ? '' : 'none';
+  if (on) {
+    waterLayer = L.tileLayer('https://storage.googleapis.com/global-surface-water/tiles2021/occurrence/{z}/{x}/{y}.png',
+      { maxZoom: 13, opacity: 0.75, className: 'gsw-tint', attribution: 'JRC GSW' }).addTo(map);
+  }
+}
+
+function communePopup(f, latlng) {
+  const p = f.properties, c = stats && stats.communes[p.ma_xa];
+  const extra = c ? `<br/>Ngập: <b>${c.km2} km²</b> (${c.pct}% diện tích xã)`
+                  : '<br/>Không có ngập ghi nhận ngày này';
+  L.popup().setLatLng(latlng)
+    .setContent(`<b>${p.ten_xa}</b><br/>${p.ten_tinh}${extra}`).openOn(map);
+}
+
+function toggleAdmin() {
+  const on = document.getElementById('adminChk').checked;
+  if (!on) { if (adminLayer) { map.removeLayer(adminLayer); } return; }
+  if (adminLayer) { adminLayer.addTo(map); return; }
+  fetch('communes.geojson').then(r => r.json()).then(g => {
+    communesGeo = g;
+    adminLayer = L.geoJSON(g, {
+      style: { color: '#fff', weight: 0.7, opacity: 0.8, fillColor: '#fff', fillOpacity: 0.02 },
+      onEachFeature: (f, layer) => layer.on('click', e => communePopup(f, e.latlng))
+    }).addTo(map);
+  });
+}
+
+let riceLayer = null;
+fetch('rice.pmtiles', { method: 'HEAD' }).then(r => {
+  if (r.ok) document.getElementById('riceRow').style.display = '';
+}).catch(() => {});
+function toggleRice() {
+  const on = document.getElementById('riceChk').checked;
+  document.getElementById('legendRice').style.display = on ? '' : 'none';
+  if (!on) { if (riceLayer) map.removeLayer(riceLayer); riceLayer = null; return; }
+  riceLayer = protomapsL.leafletLayer({ url: 'rice.pmtiles', maxDataZoom: 12, paintRules: [{
+    dataLayer: 'rice',
+    symbolizer: new protomapsL.PolygonSymbolizer({ fill: '#f5d020', opacity: 0.5 })
+  }] }).addTo(map);
+}
+
+function renderProv() {
+  const sel = document.getElementById('provSel');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— Tất cả tỉnh —</option>';
+  Object.entries(stats.provinces)
+    .sort((a, b) => b[1].km2 - a[1].km2)
+    .forEach(([code, p]) => {
+      const o = document.createElement('option');
+      o.value = code; o.textContent = `${p.ten_tinh} — ${p.km2} km²`;
+      sel.appendChild(o);
+    });
+  sel.value = cur;
+}
+
+function renderList() {
+  const q = document.getElementById('q').value.toLowerCase();
+  const prov = document.getElementById('provSel').value;
+  const el = document.getElementById('list');
+  el.innerHTML = '';
+  Object.entries(stats.communes)
+    .filter(([, c]) => (!prov || c.ma_tinh === prov) &&
+                       (!q || (c.ten_xa + ' ' + c.ten_tinh).toLowerCase().includes(q)))
+    .sort((a, b) => b[1].km2 - a[1].km2)
+    .slice(0, 300)
+    .forEach(([code, c]) => {
+      const d = document.createElement('div');
+      d.className = 'item';
+      d.innerHTML = `<b>${c.ten_xa}</b><span>${c.ten_tinh} · ngập ${c.km2} km² (${c.pct}%)</span>`;
+      d.onclick = () => zoomCommune(code, c);
+      el.appendChild(d);
+    });
+  if (!el.children.length) el.innerHTML =
+    '<div class="item"><span>Không có xã ngập trong dải quét vệ tinh ngày này</span></div>';
+}
+
+let communeIdx = null;
+function zoomCommune(code, c) {
+  const go = () => {
+    const f = communeIdx[code];
+    if (!f) return;
+    const b = L.geoJSON(f).getBounds();
+    map.fitBounds(b);
+    communePopup(f, b.getCenter());
+  };
+  if (communeIdx) { go(); return; }
+  fetch('communes.geojson').then(r => r.json()).then(g => {
+    communesGeo = g;
+    communeIdx = {}; g.features.forEach(f => communeIdx[f.properties.ma_xa] = f);
+    go();
+  });
+}
+
+fetch('dates.json').then(r => r.json()).then(m => {
+  const sel = document.getElementById('dateSel');
+  m.dates.forEach((e, i) => {
+    const o = document.createElement('option');
+    o.value = i;
+    o.textContent = e.date + ((e.tiles.length || e.depth) ? ''
+      : (e.footprint ? ' — không phát hiện ngập' : ' — không có ảnh trên VN'));
+    sel.appendChild(o);
+  });
+  sel.onchange = () => showDate(m.dates[sel.value]);
+  if (m.dates.length) showDate(m.dates[0]);
+});
+document.getElementById('provSel').onchange = renderList;
+document.getElementById('q').oninput = renderList;
+document.getElementById('depthChk').onchange = () => currentEntry && showDate(currentEntry);
+document.getElementById('floodChk').onchange = () => currentEntry && showDate(currentEntry);
+document.getElementById('fpChk').onchange = () => currentEntry && showFootprint(currentEntry);
+document.getElementById('waterChk').onchange = toggleWater;
+document.getElementById('adminChk').onchange = toggleAdmin;
+document.getElementById('riceChk').onchange = toggleRice;
+document.getElementById('sbToggle').onclick = () => {
+  document.getElementById('sidebar').classList.toggle('hidden');
+  setTimeout(() => map.invalidateSize(), 50);
+};
+document.getElementById('helpBtn').onclick = () => document.getElementById('helpOverlay').style.display = 'block';
+document.getElementById('helpClose').onclick = () => document.getElementById('helpOverlay').style.display = 'none';
+document.getElementById('helpOverlay').onclick = e => {
+  if (e.target.id === 'helpOverlay') e.target.style.display = 'none';
+};
+</script>
+</body>
+</html>
